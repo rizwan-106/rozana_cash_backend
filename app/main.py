@@ -136,8 +136,10 @@ def root():
 app.add_middleware(
     SessionMiddleware,
     secret_key=os.getenv("SECRET_KEY"),
-    same_site="lax",
-    https_only=True if ENVIRONMENT == "production" else False  # ✅ CHANGED: True in production
+    same_site="none",  # ✅ CHANGED: "none" for cross-site
+    https_only=True if ENVIRONMENT == "production" else False,  # ✅ CHANGED: True in production
+    domain=None,       # Explicit domain setting
+    max_age=3600       # ✅ ADDED: Set session timeout
 )
 
 # Include routers
