@@ -118,21 +118,29 @@ async def auth_google_callback(request: Request):
         }
         jwt_token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
-        # return JSONResponse({
-        #     "msg": "Google login successful",
-        #     "user": {
-        #         "id": str(user["_id"]),
-        #         "email": user["email"],
-        #         "name": user.get("name"),
-        #         "is_active": user.get("is_active", True),
-        #         "created_at": user.get("created_at").isoformat() if user.get("created_at") else None
-        #     },
-        #     "token": jwt_token
-        # })
-        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
-        redirect_url = f"{frontend_url}/auth/callback?token={jwt_token}"
-        return RedirectResponse(url=redirect_url)
-
+        
+        # Production में flexibility के लिए
+        frontend_url = os.getenv("FRONTEND_URL")
+        if frontend_url:
+        # Frontend app है तो redirect करें
+            redirect_url = f"{frontend_url}/auth/callback?token={jwt_token}"
+            return RedirectResponse(url=redirect_url)
+        else:
+        # Frontend नहीं है तो JSON return करें
+            return JSONResponse({
+            "success": True,
+            "message": "Authentication successful",
+            "data": {
+                "access_token": jwt_token,
+                "token_type": "bearer",
+                "user": {
+                    "id": str(user["_id"]),
+                    "email": user["email"],
+                    "name": user.get("name"),
+                    "role": user.get("role", "user")
+                }
+            }
+        })
     except Exception as e:
         print(f"Error during Google OAuth callback: {e}")
         import traceback
