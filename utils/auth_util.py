@@ -33,7 +33,7 @@ def create_token(data: dict, expires_minutes: int = ACCESS_TOKEN_EXPIRE_MINUTES)
         # "sub": data.get("user_id"),# user identifier (email / id)
         "sub": data.get("sub"),      # user identifier (email / id)
         "email":data.get("email"),
-        # "role": data.get("role"),
+        "role": data.get("role"),
         "exp": expire,
         "iat": datetime.now(timezone.utc),
     }

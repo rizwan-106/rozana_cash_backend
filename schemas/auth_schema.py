@@ -10,7 +10,7 @@ class CreateUser(BaseModel):
     name:str=Field(min_length=2, max_length=100)
     email:EmailStr
     password:str=Field(min_length=8)
-    # role:UserRole="user"
+    role:UserRole=UserRole.USER  # ← Add default value here
     model_config=ConfigDict(
         json_schema_extra={
             "example": {
@@ -27,7 +27,7 @@ class User(BaseModel):#it will use in DB
     name: str
     email: EmailStr
     password: str  # Hashed password
-    role: UserRole
+    role: UserRole=UserRole.USER  # ← Add default value here
     is_active: bool = True
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
