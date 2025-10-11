@@ -129,7 +129,7 @@ async def auth_google_callback(request: Request):
         #     },
         #     "token": jwt_token
         # })
-        frontend_url = "http://localhost:5173"
+        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
         redirect_url = f"{frontend_url}/auth/callback?token={jwt_token}"
         return RedirectResponse(url=redirect_url)
 
