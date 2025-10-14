@@ -1,12 +1,18 @@
 from fastapi import APIRouter, HTTPException,Request
-from fastapi.responses import RedirectResponse, JSONResponse
-from schemas.auth_schema import LoginUser, LoginResponse, CreateUser, UserResponse
 import os
 import jwt
+from datetime import datetime, timedelta
+from fastapi.responses import RedirectResponse, JSONResponse
+from schemas.auth_schema import LoginUser, LoginResponse, CreateUser, UserResponse, SendOTPRequest,VerifyOTPRequest
+from services.auth_service import send_otp
 
-from services.auth_service import get_user_by_email, create_user
-from utils.auth_util import verify_password, create_token
+from services.auth_service import get_user_by_email, create_user, get_user_by_mobile
+from utils.auth_util import verify_password, create_token, create_token_for_mobile
 from config.google_oauth2 import oauth
+from utils.otp_store import otp_store, otp_lookup
+from database.db import user_db
+from fastapi import Depends
+from services.auth_service import generate_otp
 
 # JWT_SECRET = os.getenv("JWT_SECRET","")
 JWT_SECRET = os.getenv("SECRET_KEY")
@@ -65,6 +71,7 @@ async def login_via_google(request: Request):
     # )
     # Get redirect URI from request host dynamically
     redirect_uri = f"{request.url.scheme}://{request.url.netloc}/api/v1/auth/google/callback"
+    print(redirect_uri)
     return await oauth.google.authorize_redirect(request, redirect_uri)
 
 @router.get("/google/callback")
@@ -75,6 +82,7 @@ async def auth_google_callback(request: Request):
     try:
         # Exchange code for access token
         token = await oauth.google.authorize_access_token(request)
+        # print("LIne 79: ",token)
         
         # Get user info from token (or fetch manually)
         user_info = token.get("userinfo")
@@ -122,11 +130,16 @@ async def auth_google_callback(request: Request):
         # Production में flexibility के लिए
         frontend_url = os.getenv("FRONTEND_URL")
         if frontend_url:
-        # Frontend app है तो redirect करें
-            redirect_url = f"{frontend_url}/auth/callback?token={jwt_token}"
+            # ✅ ROLE-BASED REDIRECT
+            user_role = user.get("role", "user")
+            
+            if user_role == "admin":
+                redirect_url = f"{frontend_url}/admin/dashboard?token={jwt_token}"
+            else:
+                redirect_url = f"{frontend_url}/dashboard?token={jwt_token}"  # User dashboard
+            
             return RedirectResponse(url=redirect_url)
         else:
-        # Frontend नहीं है तो JSON return करें
             return JSONResponse({
             "success": True,
             "message": "Authentication successful",
@@ -146,3 +159,73 @@ async def auth_google_callback(request: Request):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Authentication with Google failed.")
+    
+# =========================================#===================================#
+# MOBILE NUMBER SYSTEM
+@router.post('/send-otp')
+async def requestOTP(request: SendOTPRequest):
+    # Implement OTP sending logic here (e.g., using Twilio, Nexmo, etc.)
+    existing_user = await get_user_by_mobile(request.mobile_number)
+    otp=generate_otp()
+    otp_store[request.mobile_number] = {"otp": otp, "name": request.name}
+    
+    otp_lookup[otp] = request.mobile_number  # Store the mapping of OTP to mobile number
+    
+    if existing_user:
+        return {"message": "OTP sent", "is_new_user": False, "otp": otp}
+    else:
+        # New user - REGISTER case
+        await user_db.insert_one({
+            "name": request.name,
+            "mobile_number": request.mobile_number,
+            "role": request.role,
+            "created_at": datetime.utcnow(),
+        })
+        return {"message": "OTP sent", "is_new_user": True, "otp": otp}
+
+@router.post("/verify-otp")
+async def verify_otp(data: VerifyOTPRequest):
+
+    # Step 1: Find mobile number using OTP
+    mobile_number = otp_lookup.get(data.otp)
+    if not mobile_number:
+        raise HTTPException(status_code=400, detail="Invalid or expired OTP")
+
+    # Step 2: Fetch OTP info using mobile number
+    info = otp_store.get(mobile_number)
+    if not info or info["otp"] != data.otp:
+        raise HTTPException(status_code=400, detail="Invalid OTP")
+
+    # Step 3: Check if user exists
+    existing_user = await user_db.find_one({"mobile_number": mobile_number})
+    if existing_user:
+        await user_db.update_one(
+            {"mobile_number": mobile_number},
+            {"$set": {"is_verified": True}}
+        )
+        user_data = existing_user
+    else:
+        user_data = {
+            "name": info["name"],
+            "mobile_number": mobile_number,
+            "role": info.get("role", "user"),
+            "is_verified": True,
+            "created_at": datetime.utcnow(),
+        }
+        await user_db.insert_one(user_data)
+
+    # Step 4: Clear OTP after success
+    otp_store.pop(mobile_number, None)
+    otp_lookup.pop(data.otp, None)
+
+    # Step 5: Generate token
+    token = create_token_for_mobile(user_data)
+
+    return {
+        "message": "OTP verified successfully",
+        "access_token": token,
+        "user": {
+            "name": user_data["name"],
+            "mobile_number": mobile_number,
+        },
+    }

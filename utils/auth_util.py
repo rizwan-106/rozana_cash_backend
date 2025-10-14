@@ -10,6 +10,7 @@ ALGORITHM = os.getenv("ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("EXPIRE_MINUTE", 60))
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/v1/signin")
 
 # ---------------- Password Utils ----------------
@@ -26,7 +27,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     safe_password = safe_password[:72]  # truncate here too
     return pwd_context.verify(safe_password, hashed_password)
 
-# ---------------- Token Utils ----------------
+# ---------------- Token Utils ---------------- #
 def create_token(data: dict, expires_minutes: int = ACCESS_TOKEN_EXPIRE_MINUTES) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=expires_minutes)
     payload = {
@@ -81,3 +82,15 @@ def user_role(current_user:dict=Depends(get_current_user)):
             detail="Only users can perform transactions"
         )
     return current_user
+
+#=====================#==========================#===========================#==================
+def create_token_for_mobile(user:dict, expires_minutes: int = ACCESS_TOKEN_EXPIRE_MINUTES) -> str:
+    expire = datetime.now(timezone.utc) + timedelta(minutes=expires_minutes)
+    payload = {
+        "sub": str(user.get("_id")),      # user identifier (email / id)
+        "mobile":user.get("mobile_number"),
+        "role": user.get("role"),
+        "exp": expire,
+        "iat": datetime.now(timezone.utc),
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)

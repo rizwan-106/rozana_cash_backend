@@ -7,6 +7,8 @@ from starlette.middleware.sessions import SessionMiddleware
 import os
 import sys
 from pathlib import Path
+from routers import auth_router, user_router, admin_router
+from database.db import test_connection, close_connection  # ✅ ADDED: Import connection functions
 
 # Load environment variables FIRST (before any imports that use them)
 env_file = Path(__file__).parent.parent / '.env'
@@ -21,19 +23,9 @@ if not env_file.exists():
 # Load environment variables with explicit override
 load_dotenv(dotenv_path=env_file, override=False)  # Don't override existing system vars
 
-from routers import auth_router, user_router, admin_router
-from database.db import test_connection, close_connection  # ✅ ADDED: Import connection functions
-
-# Environment Configuration
 # Load from .env file first, then check system env
 load_dotenv(dotenv_path=env_file, override=True)  # Force override system vars
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
-print(f"🔧 Environment Mode: {ENVIRONMENT}")
-print(f"📁 Loaded from: {env_file}")
-print(f"🔍 System ENV var: {os.environ.get('ENVIRONMENT', 'Not set')}")
-print(f"🆔 Process ID: {os.getpid()}")
-print(f"💻 Working Directory: {os.getcwd()}")
-print("-" * 50)
 
 # Required Environment Variables
 REQUIRED_ENV_VARS = {
@@ -129,18 +121,23 @@ else:
 
 app = FastAPI(**app_config)
 
-@app.get("/")
-def root():
-    return {"message": "FastAPI Render deploy successful!"}
-
-app.add_middleware(
-    SessionMiddleware,
-    secret_key=os.getenv("SECRET_KEY"),
-    same_site="none",  # ✅ CHANGED: "none" for cross-site
-    https_only=True if ENVIRONMENT == "production" else False,  # ✅ CHANGED: True in production
-    domain=None,       # Explicit domain setting
-    max_age=3600       # ✅ ADDED: Set session timeout
-)
+# Session Middleware Configuration
+if ENVIRONMENT == "production":
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=os.getenv("SECRET_KEY"),
+        same_site="none",
+        https_only=True,
+        max_age=3600
+    )
+else:
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=os.getenv("SECRET_KEY"),
+        same_site="lax",  # ✅ Works with HTTP
+        https_only=False,
+        max_age=3600
+    )
 
 # Include routers
 app.include_router(auth_router.router)
@@ -155,7 +152,7 @@ if ENVIRONMENT == "production":
     if additional_origins and additional_origins[0]:
         allowed_origins.extend([origin.strip() for origin in additional_origins])
 else:
-    allowed_origins = ["*"]  # Allow all origins in development
+    allowed_origins = ["http://localhost:5173"]  # Allow all origins in development
 
 app.add_middleware(
     CORSMiddleware,

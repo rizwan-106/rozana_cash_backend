@@ -1,11 +1,11 @@
 from pydantic import BaseModel, EmailStr, Field, ConfigDict
 from enum import Enum
+from typing import Optional
 from models.user_model import PyObjectId
 from datetime import datetime
 class UserRole(str, Enum):
     ADMIN='admin'
-    USER='user'
-    
+    USER='user'      
 class CreateUser(BaseModel):
     name:str=Field(min_length=2, max_length=100)
     email:EmailStr
@@ -21,7 +21,7 @@ class CreateUser(BaseModel):
             }
         }
     )
-    
+   
 class User(BaseModel):#it will use in DB
     id: PyObjectId = Field(default_factory=PyObjectId, alias='_id')
     name: str
@@ -53,10 +53,6 @@ class LoginUser(BaseModel):
     
 
 class UserResponse(BaseModel):
-    """
-    GET /users/, GET /users/{id} mein use hoga
-    Password NAHI bhejenge client ko!
-    """
     id: str = Field(alias='_id')
     name: str
     email: EmailStr
@@ -73,7 +69,7 @@ class UserResponse(BaseModel):
                 "_id": "507f1f77bcf86cd799439011",
                 "name": "Rahul Kumar",
                 "email": "rahul@gmail.com",
-                # "role": "user",
+                "role": "user",
                 "is_active": True,
                 "created_at": "2024-01-15T10:30:00",
                 "updated_at": "2024-01-15T10:30:00"
@@ -96,7 +92,7 @@ class LoginResponse(BaseModel):
                     "_id": "507f1f77bcf86cd799439011",
                     "name": "Rahul Kumar",
                     "email": "rahul@gmail.com",
-                    # "role": "user",
+                    "role": "user",
                     "is_active": True,
                     "created_at": "2024-01-15T10:30:00",
                     "updated_at": "2024-01-15T10:30:00"
@@ -104,3 +100,45 @@ class LoginResponse(BaseModel):
             }
         }
     )
+    
+    
+class SendOTPRequest(BaseModel):
+    name:str=Field(...,min_length=2, max_length=100)
+    mobile_number:str=Field(..., min_length=10, max_length=10)
+    role:UserRole=UserRole.USER  # ← Add default value here
+    
+    model_config=ConfigDict(
+        json_schema_extra={
+            "example": {
+                "name": "Rahul Kumar",
+                "mobile_number": "9876543210",
+                "role": "user"
+            }
+        }
+    )
+
+class OTPResponse(BaseModel):
+    message: str
+    otp: str  # In production, don't send OTP in response
+    is_new_user: bool
+    
+    model_config=ConfigDict(
+        json_schema_extra={
+            "example": {
+                "message": "OTP sent to 9876543210",
+                "otp": "1234",  # In production, don't send OTP in response
+                "is_new_user": True
+            }
+        }
+    )
+    
+class VerifyOTPRequest(BaseModel):
+    # mobile_number:Optional[str]=Field(..., min_length=10, max_length=10)
+    otp:str=Field(min_length=4, max_length=4)
+    model_config=ConfigDict(
+        json_schema_extra={
+            "example": {
+                "otp": "0000"
+            }
+        }
+    )   

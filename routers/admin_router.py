@@ -1,3 +1,4 @@
+
 from fastapi import APIRouter, Body, Depends, HTTPException, status
 from utils.auth_util import  get_current_user
 from database.db import admin_db, user_db, user_transaction_db
@@ -7,6 +8,46 @@ from datetime import datetime
 
 router = APIRouter(prefix='/api/v1/admin', tags=['Admin'])
 
+from datetime import datetime, timedelta
+from fastapi import Query
+# Dashboard endpoint for stats
+@router.get('/dashboard')
+async def get_dashboard_stats(period: str = Query('30d'), current_user: dict = Depends(get_current_user)):
+    # Parse period (e.g., '30d', '7d', '1d')
+    try:
+        days = int(period.replace('d', ''))
+    except:
+        days = 30
+    end_date = datetime.utcnow()
+    start_date = end_date - timedelta(days=days)
+
+    # Total users (excluding admin)
+    user_count = await user_db.count_documents({"role": {"$ne": "admin"}})
+
+    # Total revenue (sum of game_fee in user_transactions)
+    total_revenue = await user_transaction_db.aggregate([
+        {"$match": {"type": "game_fee", "created_at": {"$gte": start_date, "$lte": end_date}}},
+        {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
+    ]).to_list(length=1)
+    total_revenue = total_revenue[0]["total"] if total_revenue else 0
+
+    # Revenue by day
+    pipeline = [
+        {"$match": {"type": "game_fee", "created_at": {"$gte": start_date, "$lte": end_date}}},
+        {"$group": {
+            "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$created_at"}},
+            "total": {"$sum": "$amount"}
+        }},
+        {"$sort": {"_id": 1}}
+    ]
+    revenue_by_day = await user_transaction_db.aggregate(pipeline).to_list(length=None)
+    revenue_by_day = [{"date": r["_id"], "total": r["total"]} for r in revenue_by_day]
+
+    return {
+        "totalUsers": user_count,
+        "totalRevenue": total_revenue,
+        "revenueByDay": revenue_by_day
+    }
 @router.patch("/update-upi_id")
 # async def update_upi_id(new_upi: str = Body(..., embed=True),current_user: dict = Depends(admin_role)):
 async def update_upi_id(new_upi: str = Body(..., embed=True),current_user: dict = Depends(get_current_user)):
@@ -146,8 +187,7 @@ async def get_users_with_txn_summary(current_user: dict = Depends(get_current_us
     try:
         pipeline = [
             # 1️⃣ Only non-admin users
-            # {"$match": {"role": {"$ne": "admin"}}},
-            {"$match": {}},
+            {"$match": {"role": {"$ne": "admin"}}},
 
             # 2️⃣ Lookup transactions: convert users._id to string to match user_transactions.user_id
             {
@@ -247,7 +287,8 @@ async def get_users_with_txn_summary(current_user: dict = Depends(get_current_us
             {
                 "$project": {
                     "name": 1,
-                    "email": 1,
+                    # "email": 1,
+                    "mobile_number":1,
                     "created_at": 1,
                     "total_credit": 1,
                     "total_game_fee": 1,
