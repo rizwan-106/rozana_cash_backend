@@ -174,7 +174,6 @@ app.add_middleware(
 # Protected routes
 PROTECTED_PATHS = [  # ✅ CHANGED: Renamed from protected_path to PROTECTED_PATHS (convention)
     '/api/v1/admin/update-upi_id',
-    '/api/v1/admin/upi_id',
     '/api/v1/admin/get_all_users',
     '/api/v1/admin/all_wallet_data',
     '/api/v1/admin/user/{user_id}/transactions',
@@ -183,6 +182,9 @@ PROTECTED_PATHS = [  # ✅ CHANGED: Renamed from protected_path to PROTECTED_PAT
     '/api/v1/admin/monthly_earnings',
     '/api/v1/admin/last_year_earnings',
     '/api/v1/admin/last_month_earnings',
+    '/api/v1/admin/monthly_earnings_with_period',
+    '/api/v1/admin/monthly_user_growth',
+    '/api/v1/admin/monthly_combined_data',
     '/api/v1/user/create_transaction'
 ]
 

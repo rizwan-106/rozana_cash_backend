@@ -74,6 +74,7 @@ except Exception as e:
 user_db = db.get_collection("users")
 user_transaction_db = db.get_collection("user_transactions")
 admin_db = db.get_collection("admin_db")
+recharge_pack_db = db.get_collection("recharge_packs")
 
 # 👉🏻 ADDED: Connection test
 async def test_connection():

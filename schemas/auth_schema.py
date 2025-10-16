@@ -45,8 +45,8 @@ class LoginUser(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "email": "rahul@gmail.com",
-                "password": "Password123"
+                "email": "admin@gmail.com",
+                "password": "admin@123"
             }
         }
     )

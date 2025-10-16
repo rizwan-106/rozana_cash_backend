@@ -1,10 +1,12 @@
 
 from fastapi import APIRouter, Body, Depends, HTTPException, status
-from utils.auth_util import  get_current_user
-from database.db import admin_db, user_db, user_transaction_db
 from bson import ObjectId
 from typing import Optional
 from datetime import datetime
+from utils.auth_util import  get_current_user
+from database.db import admin_db, user_db, user_transaction_db
+from schemas.recharge_schema import  RechargePackCreate, RechargePackUpdate
+from services.recharge_service import create_pack, get_all_packs,get_pack_by_id,update_pack,delete_pack,hard_delete_pack
 
 router = APIRouter(prefix='/api/v1/admin', tags=['Admin'])
 
@@ -70,16 +72,12 @@ async def update_upi_id(new_upi: str = Body(..., embed=True),current_user: dict 
         raise HTTPException(status_code=500,detail=f"Error updating UPI ID: {str(e)}")   
 
 @router.get('/upi_id')
-async def get_upi_id(current_user: dict = Depends(get_current_user)):
+async def get_upi_id():
     try:
-        admin_id = current_user['sub']
-        result = await admin_db.find_one({'user_id': ObjectId(admin_id)})
-        if not result:
-            raise HTTPException(status_code=404, detail="Admin profile not found")
-        
-        upi_id = result.get('upi_id')
-        if not upi_id:
-            raise HTTPException(status_code=404, detail="UPI ID not set for this admin")
+        upi_id=await admin_db.find_one({})
+        upi_id['_id'] = str(upi_id['_id'])
+        if 'user_id' in upi_id:
+            upi_id['user_id'] = str(upi_id['user_id'])
             
         return {"data": upi_id}
     except HTTPException:
@@ -339,25 +337,29 @@ async def get_todays_earnings(current_user: dict = Depends(get_current_user)):
                 }
             }
         ]
-
         result = await user_transaction_db.aggregate(pipeline).to_list(length=None)
-
         totals = {"wallet_topup": 0, "game_fee": 0, "winning": 0, "withdrawal": 0}
         for record in result:
             totals[record["_id"]] = record["total_amount"]
-
         total_transactions = sum(r["count"] for r in result)
-
+        # Count users added today
+        users_added_today = await user_db.count_documents({
+            "created_at": {
+                "$gte": start_of_today,
+                "$lt": start_of_tomorrow
+            }
+        })
         return {
             "total_wallet_topup": totals["wallet_topup"],
             "total_game_fee": totals["game_fee"],
             "total_winning": totals["winning"],
             "total_withdrawal": totals["withdrawal"],
             "total_transactions": total_transactions,
+            "users_added_today":users_added_today
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching today's earnings: {str(e)}")
-    
+        raise HTTPException(status_code=500, detail=f"Error fetching today's earnings: {str(e)}")  
+
 @router.get('/monthly_earnings')
 async def get_monthly_earnings(
     year: Optional[int] = None,  # If None, use current year
@@ -479,6 +481,7 @@ async def get_monthly_earnings(
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
 
 
 @router.get('/last_year_earnings')
@@ -756,3 +759,355 @@ async def get_last_month_earnings(current_user: dict = Depends(get_current_user)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching last month earnings: {str(e)}")
 
+
+@router.get('/monthly_earnings_with_period')
+async def get_monthly_earnings(
+    year: Optional[int] = None,
+    month: Optional[int] = None,
+    period: Optional[str] = None,
+    current_user: dict = Depends(get_current_user)
+):
+    try:
+        from datetime import datetime, timedelta, timezone
+        IST = timezone(timedelta(hours=5, minutes=30))
+        now = datetime.now(IST)
+
+        if period:
+            if period == "1d":
+                start_date = datetime.combine(now.date(), datetime.min.time(), tzinfo=IST)
+                end_date = datetime.combine(now.date(), datetime.max.time(), tzinfo=IST)
+            elif period == "7d":
+                start_date = now - timedelta(days=7)
+                end_date = now
+            elif period == "30d":
+                start_date = now - timedelta(days=30)
+                end_date = now
+            elif period == "6m":
+                start_date = now - timedelta(days=180)
+                end_date = now
+            elif period == "1y":
+                start_date = now - timedelta(days=365)
+                end_date = now
+            else:
+                raise HTTPException(status_code=400, detail="Invalid period")
+
+            match_condition = {
+                "created_at": {
+                    "$gte": start_date,
+                    "$lte": end_date
+                }
+            }
+
+            pipeline = [
+                {"$match": match_condition},
+                {
+                    "$group": {
+                        "_id": None,
+                        "wallet_topup": {
+                            "$sum": {
+                                "$cond": [
+                                    {"$eq": [{"$toString": "$type"}, "wallet_topup"]},
+                                    "$amount",
+                                    0
+                                ]
+                            }
+                        },
+                        "game_fee": {
+                            "$sum": {
+                                "$cond": [
+                                    {"$eq": [{"$toString": "$type"}, "game_fee"]},
+                                    "$amount",
+                                    0
+                                ]
+                            }
+                        },
+                        "winning": {
+                            "$sum": {
+                                "$cond": [
+                                    {"$eq": [{"$toString": "$type"}, "winning"]},
+                                    "$amount",
+                                    0
+                                ]
+                            }
+                        },
+                        "withdrawal": {
+                            "$sum": {
+                                "$cond": [
+                                    {"$eq": [{"$toString": "$type"}, "withdrawal"]},
+                                    "$amount",
+                                    0
+                                ]
+                            }
+                        },
+                        "transaction_count": {"$sum": 1}
+                    }
+                },
+                {
+                    "$project": {
+                        "_id": 0,
+                        "wallet_topup": 1,
+                        "game_fee": 1,
+                        "winning": 1,
+                        "withdrawal": 1,
+                        "net_earnings": {
+                            "$subtract": [
+                                {"$add": ["$wallet_topup", "$game_fee"]},
+                                {"$add": ["$winning", "$withdrawal"]}
+                            ]
+                        },
+                        "transaction_count": 1
+                    }
+                }
+            ]
+
+            result = await user_transaction_db.aggregate(pipeline).to_list(length=None)
+
+            # Count active users for the period
+            user_count_pipeline = [
+                {"$match": match_condition},
+                {
+                    "$group": {
+                        "_id": None,
+                        "unique_users": {"$addToSet": "$user_id"}
+                    }
+                },
+                {"$project": {"user_count": {"$size": "$unique_users"}}}
+            ]
+            user_result = await user_transaction_db.aggregate(user_count_pipeline).to_list(length=None)
+
+            # Count new users created in this period
+            new_users_count = await user_db.count_documents({
+                "created_at": {"$gte": start_date, "$lte": end_date},
+                "role": "user",
+                "is_verified": True
+            })
+
+            earnings_data = result[0] if result else {
+                "wallet_topup": 0,
+                "game_fee": 0,
+                "winning": 0,
+                "withdrawal": 0,
+                "net_earnings": 0,
+                "transaction_count": 0,
+            }
+
+            return {
+                "period": period,
+                "start_date": start_date.isoformat(),
+                "end_date": end_date.isoformat(),
+                "active_users": user_result[0]["user_count"] if user_result else 0,
+                "new_users": new_users_count,
+                "revenue": earnings_data["net_earnings"],
+                "data": earnings_data,
+            }
+
+    except Exception as e:
+        import traceback
+        print("ERROR in /monthly_earnings_with_period:", traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+
+@router.get('/monthly_user_growth')
+async def get_monthly_user_growth(
+    year: Optional[int] = None,
+    current_user: dict = Depends(get_current_user)
+):
+    try:
+        from datetime import datetime
+        
+        # If year not provided, use current year
+        if year is None or year == 0:
+            year = datetime.utcnow().year
+        
+        # Match users created in the specified year
+        match_condition = {
+            "$expr": {
+                "$eq": [{"$year": "$created_at"}, year]
+            },
+            "role": {"$ne": "admin"}  # Exclude admin users
+        }
+        
+        pipeline = [
+            {"$match": match_condition},
+            {
+                "$group": {
+                    "_id": {
+                        "year": {"$year": "$created_at"},
+                        "month": {"$month": "$created_at"}
+                    },
+                    "user_count": {"$sum": 1}
+                }
+            },
+            {
+                "$project": {
+                    "_id": 0,
+                    "year": "$_id.year",
+                    "month": "$_id.month",
+                    "user_count": 1
+                }
+            },
+            {"$sort": {"month": 1}}
+        ]
+        
+        result = await user_db.aggregate(pipeline).to_list(length=None)
+        
+        # Add month names
+        month_names = [
+            "January", "February", "March", "April", "May", "June",
+            "July", "August", "September", "October", "November", "December"
+        ]
+        
+        for record in result:
+            record["month_name"] = month_names[record["month"] - 1]
+        
+        return {
+            "year": year,
+            "data": result,
+            "total_users": sum(r["user_count"] for r in result)
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+    
+@router.get('/monthly_combined_data')
+async def get_monthly_combined_data(
+    year: Optional[int] = None,
+    current_user: dict = Depends(get_current_user)
+):
+    try:
+        from datetime import datetime
+        
+        if year is None or year == 0:
+            year = datetime.utcnow().year
+        
+        # Get user growth data
+        user_pipeline = [
+            {
+                "$match": {
+                    "$expr": {"$eq": [{"$year": "$created_at"}, year]},
+                    "role": {"$ne": "admin"}
+                }
+            },
+            {
+                "$group": {
+                    "_id": {"month": {"$month": "$created_at"}},
+                    "user_count": {"$sum": 1}
+                }
+            },
+            {"$sort": {"_id.month": 1}}
+        ]
+        
+        # Get revenue data
+        revenue_pipeline = [
+            {
+                "$match": {
+                    "$expr": {"$eq": [{"$year": "$created_at"}, year]}
+                }
+            },
+            {
+                "$group": {
+                    "_id": {"month": {"$month": "$created_at"}},
+                    "wallet_topup": {
+                        "$sum": {
+                            "$cond": [
+                                {"$eq": [{"$toString": "$type"}, "wallet_topup"]},
+                                "$amount",
+                                0
+                            ]
+                        }
+                    }
+                }
+            },
+            {"$sort": {"_id.month": 1}}
+        ]
+        
+        user_data = await user_db.aggregate(user_pipeline).to_list(length=None)
+        revenue_data = await user_transaction_db.aggregate(revenue_pipeline).to_list(length=None)
+        
+        # Month names
+        month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", 
+                      "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        
+        # Combine data for all 12 months
+        combined_data = []
+        for month_num in range(1, 13):
+            user_record = next((u for u in user_data if u["_id"]["month"] == month_num), None)
+            revenue_record = next((r for r in revenue_data if r["_id"]["month"] == month_num), None)
+            
+            combined_data.append({
+                "month": month_names[month_num - 1],
+                "month_number": month_num,
+                "users": user_record["user_count"] if user_record else 0,
+                "revenue": revenue_record["wallet_topup"] if revenue_record else 0
+            })
+        
+        return {
+            "year": year,
+            "data": combined_data
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+    
+# =================== RECHARGE PACKS ===================#
+@router.post("/create-recharge-pack")
+async def create_recharge_pack(pack: RechargePackCreate):
+    """Admin: Create a new recharge pack"""
+    try:
+        result = await create_pack(pack)
+        return {"success": True, "data": result, "message": "Pack created successfully"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/get-recharge-packs")
+async def get_recharge_packs(active_only: bool = Query(True)):
+    """Get all recharge packs (for frontend to display)"""
+    try:
+        packs = await get_all_packs(active_only=active_only)
+        return {"success": True, "data": packs, "count": len(packs)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/packs/{pack_id}")
+async def get_recharge_pack(pack_id: str):
+    """Get a specific pack by pack_id"""
+    try:
+        pack = await get_pack_by_id(pack_id)
+        if not pack:
+            raise HTTPException(status_code=404, detail=f"Pack '{pack_id}' not found")
+        return {"success": True, "data": pack}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.put("/packs/{pack_id}")
+async def update_recharge_pack(pack_id: str, pack_update: RechargePackUpdate):
+    """Admin: Update a recharge pack (price, spins, etc.)"""
+    try:
+        updated_pack = await update_pack(pack_id, pack_update)
+        return {"success": True, "data": updated_pack, "message": "Pack updated successfully"}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/packs/{pack_id}")
+async def delete_recharge_pack(pack_id: str, hard_delete: bool = Query(False)):
+    """Admin: Delete a recharge pack"""
+    try:
+        if hard_delete:
+            success = await hard_delete_pack(pack_id)
+        else:
+            success = await delete_pack(pack_id)
+        
+        if not success:
+            raise HTTPException(status_code=404, detail=f"Pack '{pack_id}' not found")
+        
+        return {"success": True, "message": "Pack deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
