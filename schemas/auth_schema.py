@@ -101,6 +101,10 @@ class LoginResponse(BaseModel):
         }
     )
     
+class UpdateProfileRequest(BaseModel):
+    email:Optional[EmailStr]=None
+    password:Optional[str]=None
+    
     
 class SendOTPRequest(BaseModel):
     name:str=Field(...,min_length=2, max_length=100)

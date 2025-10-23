@@ -1,9 +1,9 @@
-from fastapi import APIRouter, HTTPException,Request
+from fastapi import APIRouter, HTTPException,Request,status
 import os
 import jwt
 from datetime import datetime, timedelta
 from fastapi.responses import RedirectResponse, JSONResponse
-from schemas.auth_schema import LoginUser, LoginResponse, CreateUser, UserResponse, SendOTPRequest,VerifyOTPRequest
+from schemas.auth_schema import LoginUser, LoginResponse, CreateUser, UserResponse, SendOTPRequest,VerifyOTPRequest,UpdateProfileRequest
 from services.auth_service import send_otp
 
 from services.auth_service import get_user_by_email, create_user, get_user_by_mobile
@@ -41,12 +41,6 @@ async def signin(user: LoginUser):
     
     if not isPasswordVerified:
         raise HTTPException(status_code=401, detail="Password didn't matched.")
-    
-    # token = create_token({
-    #     'user_id': str(existing_user['_id']),
-    #     'email': existing_user['email'],
-    #     # 'role': existing_user['role']
-    # })
     token = create_token({
         'sub': str(existing_user['_id']),
         'email': existing_user['email'],
@@ -57,14 +51,11 @@ async def signin(user: LoginUser):
         access_token=token,
         token_type='bearer',
         user=UserResponse(**existing_user)
-    )
+    )    
     
 # -------------------- Google OAuth2 --------------------# 
 @router.get("/login/google")
 async def login_via_google(request: Request):
-    """
-    Step 1: Redirect user to Google login page
-    """
     # redirect_uri = os.getenv(
     #     "GOOGLE_REDIRECT_URI",
     #     "http://127.0.0.1:8000/api/v1/auth/google/callback"

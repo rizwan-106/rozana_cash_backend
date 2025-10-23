@@ -152,7 +152,7 @@ if ENVIRONMENT == "production":
     if additional_origins and additional_origins[0]:
         allowed_origins.extend([origin.strip() for origin in additional_origins])
 else:
-    allowed_origins = ["http://localhost:5173"]  # Allow all origins in development
+    allowed_origins = ["*"]  # Allow all origins in development
 
 app.add_middleware(
     CORSMiddleware,
@@ -174,6 +174,8 @@ app.add_middleware(
 # Protected routes
 PROTECTED_PATHS = [  # ✅ CHANGED: Renamed from protected_path to PROTECTED_PATHS (convention)
     '/api/v1/admin/update-upi_id',
+    '/api/v1/admin/update-profile',
+    '/api/v1/admin/profile',
     '/api/v1/admin/get_all_users',
     '/api/v1/admin/all_wallet_data',
     '/api/v1/admin/user/{user_id}/transactions',

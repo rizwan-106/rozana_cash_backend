@@ -2,60 +2,20 @@
 from fastapi import APIRouter, Body, Depends, HTTPException, status
 from bson import ObjectId
 from typing import Optional
-from datetime import datetime
 from utils.auth_util import  get_current_user
 from database.db import admin_db, user_db, user_transaction_db
 from schemas.recharge_schema import  RechargePackCreate, RechargePackUpdate
+from schemas.auth_schema import UpdateProfileRequest
 from services.recharge_service import create_pack, get_all_packs,get_pack_by_id,update_pack,delete_pack,hard_delete_pack
+from fastapi import Query
 
 router = APIRouter(prefix='/api/v1/admin', tags=['Admin'])
 
-from datetime import datetime, timedelta
-from fastapi import Query
-# Dashboard endpoint for stats
-@router.get('/dashboard')
-async def get_dashboard_stats(period: str = Query('30d'), current_user: dict = Depends(get_current_user)):
-    # Parse period (e.g., '30d', '7d', '1d')
-    try:
-        days = int(period.replace('d', ''))
-    except:
-        days = 30
-    end_date = datetime.utcnow()
-    start_date = end_date - timedelta(days=days)
-
-    # Total users (excluding admin)
-    user_count = await user_db.count_documents({"role": {"$ne": "admin"}})
-
-    # Total revenue (sum of game_fee in user_transactions)
-    total_revenue = await user_transaction_db.aggregate([
-        {"$match": {"type": "game_fee", "created_at": {"$gte": start_date, "$lte": end_date}}},
-        {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
-    ]).to_list(length=1)
-    total_revenue = total_revenue[0]["total"] if total_revenue else 0
-
-    # Revenue by day
-    pipeline = [
-        {"$match": {"type": "game_fee", "created_at": {"$gte": start_date, "$lte": end_date}}},
-        {"$group": {
-            "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$created_at"}},
-            "total": {"$sum": "$amount"}
-        }},
-        {"$sort": {"_id": 1}}
-    ]
-    revenue_by_day = await user_transaction_db.aggregate(pipeline).to_list(length=None)
-    revenue_by_day = [{"date": r["_id"], "total": r["total"]} for r in revenue_by_day]
-
-    return {
-        "totalUsers": user_count,
-        "totalRevenue": total_revenue,
-        "revenueByDay": revenue_by_day
-    }
 @router.patch("/update-upi_id")
 # async def update_upi_id(new_upi: str = Body(..., embed=True),current_user: dict = Depends(admin_role)):
 async def update_upi_id(new_upi: str = Body(..., embed=True),current_user: dict = Depends(get_current_user)):
-
     try:
-        admin_id = current_user["sub"]
+        admin_id = current_user["_id"]
           
         result = await admin_db.update_one(
         {"user_id": ObjectId(admin_id)},
@@ -87,6 +47,66 @@ async def get_upi_id():
             status_code=500,
             detail=f"Error fetching UPI ID: {str(e)}"
         )
+        
+@router.patch('/update-profile')
+async def update_profile(data: UpdateProfileRequest, current_user: dict = Depends(get_current_user)):
+    if not data.email and not data.password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Please provide at least one field to update (email or password)"
+        )
+    # Use _id instead of email to find user
+    user_id = current_user['_id']
+    existing_user = await user_db.find_one({"_id": user_id})
+    
+    if not existing_user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User Not Found!")
+    
+    updated_field = {}
+    
+    if data.password:
+        from utils.auth_util import hash_password
+        hashed_password = hash_password(data.password)
+        updated_field['password'] = hashed_password
+        
+    if data.email:
+       updated_field['email'] = data.email
+        
+    if not updated_field:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No valid field to update!"
+        )
+    
+    # Update by _id, not email
+    result = await user_db.update_one(
+        {"_id": user_id},
+        {"$set": updated_field}
+    )
+    
+    if result.modified_count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No changes were made"
+        )
+    
+    # Get updated user data
+    updated_user = await user_db.find_one({"_id": user_id})
+
+    return {
+        "success": True,
+        "message": "Profile updated successfully",
+        "email": updated_user['email'],
+        "updated_fields": list(updated_field.keys())
+    }
+
+@router.get('/profile/{admin_id}')
+async def getProfile(admin_id: str, current_user: dict = Depends(get_current_user)):
+    admin = await user_db.find_one({"_id": admin_id})
+    if not admin:
+        raise HTTPException(404, "Admin not found")
+    return {"email": admin.get("email")}
+    
         
 @router.get('/get_all_users')
 async def get_all_users(current_user: dict = Depends(get_current_user)):
@@ -130,6 +150,7 @@ async def get_all_wallet_data(current_user: dict = Depends(get_current_user)):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching wallet data: {str(e)}")
+
 
 @router.get('/user/{user_id}/transactions')
 async def get_user_transactions(user_id: str, current_user: dict = Depends(get_current_user)):
@@ -1095,13 +1116,12 @@ async def update_recharge_pack(pack_id: str, pack_update: RechargePackUpdate):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/packs/{pack_id}")
-async def delete_recharge_pack(pack_id: str, hard_delete: bool = Query(False)):
+# async def delete_recharge_pack(pack_id: str, hard_delete: bool = Query(False)):
+async def delete_recharge_pack(pack_id: str):
+
     """Admin: Delete a recharge pack"""
     try:
-        if hard_delete:
-            success = await hard_delete_pack(pack_id)
-        else:
-            success = await delete_pack(pack_id)
+        success = await hard_delete_pack(pack_id)
         
         if not success:
             raise HTTPException(status_code=404, detail=f"Pack '{pack_id}' not found")

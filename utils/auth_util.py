@@ -4,6 +4,7 @@ from fastapi import HTTPException, status, Depends
 import hashlib, base64, jwt, os
 from datetime import datetime, timezone, timedelta
 from jwt.exceptions import ExpiredSignatureError, InvalidTokenError
+from database.db import user_db
 
 SECRET_KEY = os.getenv("SECRET_KEY", "supersecret")
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
@@ -16,16 +17,20 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/v1/signin")
 # ---------------- Password Utils ----------------
 def hash_password(password: str) -> str:
     # Pre-hash with sha256 to avoid bcrypt 72-byte limit
-    sha256_digest = hashlib.sha256(password.encode("utf-8")).digest()
-    safe_password = base64.b64encode(sha256_digest).decode("ascii")
-    safe_password = safe_password[:72]
-    return pwd_context.hash(safe_password)
+    # sha256_digest = hashlib.sha256(password.encode("utf-8")).digest()
+    # safe_password = base64.b64encode(sha256_digest).decode("ascii")
+    # safe_password = safe_password[:72]
+    # return pwd_context.hash(safe_password)
+    return pwd_context.hash(password)
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    sha256_digest = hashlib.sha256(plain_password.encode("utf-8")).digest()
-    safe_password = base64.b64encode(sha256_digest).decode("ascii")
-    safe_password = safe_password[:72]  # truncate here too
-    return pwd_context.verify(safe_password, hashed_password)
+    # sha256_digest = hashlib.sha256(plain_password.encode("utf-8")).digest()
+    # safe_password = base64.b64encode(sha256_digest).decode("ascii")
+    # safe_password = safe_password[:72]  # truncate here too
+    # print(f"safe pass: {safe_password}")
+    # print(f"hashed pass: {hashed_password}")
+    # return pwd_context.verify(safe_password, hashed_password)
+    return pwd_context.verify(plain_password, hashed_password)
 
 # ---------------- Token Utils ---------------- #
 def create_token(data: dict, expires_minutes: int = ACCESS_TOKEN_EXPIRE_MINUTES) -> str:
@@ -57,7 +62,7 @@ def authenticate_user(token: str):
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-def get_current_user(token: str = Depends(oauth2_scheme)):
+async def get_current_user(token: str = Depends(oauth2_scheme)):
     payload=authenticate_user(token)
     if not payload:
         raise HTTPException(
@@ -65,7 +70,17 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
             detail="Invalid or token expired",
             headers={'WWW-Authenticate': 'Bearer'}
         )
-    return payload
+    # return payload
+    user_id = payload.get("sub")
+    user = await user_db.find_one({"_id": user_id})
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    return user  # ✅ Returns fresh data with updated email/password
 
 def admin_role(current_user: dict = Depends(get_current_user)):
     if current_user.get("role") != "admin":
